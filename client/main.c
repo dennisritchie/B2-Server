@@ -14,6 +14,7 @@
 #include <err.h>
 #include <errno.h>
 #include <error.h>
+#include <signal.h>
 char *host = "127.0.0.1";
 //char *host = "115.77.68.15";
 //char *host = "localhost";
@@ -34,9 +35,9 @@ int sk_recv = -1;
 static void * part_recv(void* param);
 static void part_recv_go();
 char * mq_key_server;
+pthread_t p_send_id, p_recv_id;
 
-
-
+void sighand(int signo);
 static void daemonize(void)
 {
     pid_t pid, sid;
@@ -80,6 +81,14 @@ static void daemonize(void)
 int main (int argc, char * argv[])
 {
 //	daemonize();
+	struct sigaction        actions;
+	memset(&actions, 0, sizeof(actions));
+	sigemptyset(&actions.sa_mask);
+	actions.sa_flags = 0;
+	actions.sa_handler = sighand;
+
+	int rc = sigaction(SIGALRM,&actions,0);
+
     //$ cat /proc/sys/net/ipv4/tcp_fin_timeout
     printf("argv[0]: %s - argc: %d\n", argv[0], (int)argc);    
     part_recv_go();
@@ -114,13 +123,14 @@ void * part_send(void* param){
 
     fprintf (stderr, "--->Init mess: \"%s\"\n", message);
 
-    while(i < 60)
-    {
+    while(i < 60) {
         memset(message, 0,  MAX_BUFFER);
-        sprintf(message, "%s Index: %d", "From send client socket.", i+2);
+        sprintf(message, "%s Index: %d", "From send client socket.", i + 1);
+        sleep(1);
         sleep(1);
         send(sk_send, message, strlen(message), 0);
         ++i;
+
     }
     send(sk_send, CLIENT_CLOSED_CONNECT, strlen(CLIENT_CLOSED_CONNECT), 0);
     fprintf (stderr, "close send socket\n");
@@ -142,6 +152,7 @@ static void part_send_go(){
         exit(1);
     }
     pthread_create(&pthr_id, &attr, part_send, 0);
+    p_send_id = pthr_id;
 //    pthread_create()
 }
 /**
@@ -189,8 +200,11 @@ static void * part_recv(void* param)
         if(strcmp(message, CLIENT_CLOSED_CONNECT) == 0){
             break;
         }
-        if(strlen(message) == 0){
+        else if(strlen(message) == 0){
             break;
+        }
+        else{
+        	pthread_kill(p_send_id, SIGALRM);
         }
     }
     shutdown(sk_send, 2);
@@ -208,4 +222,11 @@ static void part_recv_go()
         exit(1);
     }
     pthread_create(&pthr_id, &attr, part_recv, 0);
+}
+void sighand(int signo)
+{
+	pthread_t             self = pthread_self();
+	fprintf(stdout, "--->Sighand Pthread ID: %ld\n", self);
+	fprintf(stdout, "--->Read data from data link list\n");
+	return;
 }
