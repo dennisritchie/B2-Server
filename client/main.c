@@ -36,6 +36,15 @@ static void * part_recv(void* param);
 static void part_recv_go();
 char * mq_key_server;
 pthread_t p_send_id, p_recv_id;
+int count;
+char * shared_data = 0;
+pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;
+char waiting = 1;
+char get_waiting();
+void set_waiting(char);
+
+char * get_shared_data();
+void set_shared_data(char*);
 
 void sighand(int signo);
 static void daemonize(void)
@@ -81,6 +90,7 @@ static void daemonize(void)
 int main (int argc, char * argv[])
 {
 //	daemonize();
+	count = 0;
 	struct sigaction        actions;
 	memset(&actions, 0, sizeof(actions));
 	sigemptyset(&actions.sa_mask);
@@ -123,14 +133,34 @@ void * part_send(void* param){
 
     fprintf (stderr, "--->Init mess: \"%s\"\n", message);
 
-    while(i < 60) {
-        memset(message, 0,  MAX_BUFFER);
-        sprintf(message, "%s Index: %d", "From send client socket.", i + 1);
-        sleep(1);
-        sleep(1);
-        send(sk_send, message, strlen(message), 0);
-        ++i;
-
+//    while(i < 60) {
+//        memset(message, 0,  MAX_BUFFER);
+//        sprintf(message, "%s Index: %d", "From send client socket.", i + 1);
+//        sleep(1);
+//        sleep(1);
+//        send(sk_send, message, strlen(message), 0);
+//        ++i;
+//
+//    }
+    while(1){
+    	char * data = get_shared_data();
+    	if(data == 0 && count > 0){
+    		//sleep(100);
+    		pause();
+    	}
+    	else{
+    		if(count >= 60){
+    			break;
+    		}
+            memset(message, 0,  MAX_BUFFER);
+            sprintf(message, "%s Index: %d", "From send client socket.", count + 1);
+            send(sk_send, message, strlen(message), 0);
+            fprintf(stdout, "--->Shared data: %s.\n", data);
+            free(data);
+            ++count;
+//            sleep(1);
+//            sleep(1);
+    	}
     }
     send(sk_send, CLIENT_CLOSED_CONNECT, strlen(CLIENT_CLOSED_CONNECT), 0);
     fprintf (stderr, "close send socket\n");
@@ -204,6 +234,7 @@ static void * part_recv(void* param)
             break;
         }
         else{
+        	set_shared_data(message);
         	pthread_kill(p_send_id, SIGALRM);
         }
     }
@@ -216,8 +247,7 @@ static void part_recv_go()
     pthread_t pthr_id = -1;
     pthread_attr_t attr;
     int s = pthread_attr_init(&attr);
-    if (s != 0)
-    {
+    if (s != 0) {
         perror("pthread_attr_init");
         exit(1);
     }
@@ -228,5 +258,50 @@ void sighand(int signo)
 	pthread_t             self = pthread_self();
 	fprintf(stdout, "--->Sighand Pthread ID: %ld\n", self);
 	fprintf(stdout, "--->Read data from data link list\n");
+	sleep(1);
 	return;
+}
+//char get_waiting(){
+//	char rs = 0;
+//	pthread_mutex_lock(&g_mutex);
+//		rs = waiting;
+//		if(rs == 0){
+//			fprintf(stdout, "--->Getting data into shared region.\n");
+//		}
+//	pthread_mutex_unlock(&g_mutex);
+//	return rs;
+//}
+//void set_waiting(char i){
+//	pthread_mutex_lock(&g_mutex);
+//		waiting = i;
+//		fprintf(stdout, "--->Setting data into shared region.\n");
+//	pthread_mutex_unlock(&g_mutex);
+//}
+char * get_shared_data(){
+	char * rs = 0;
+	pthread_mutex_lock(&g_mutex);
+		if(shared_data != 0){
+			int n = strlen(shared_data) + 1;
+			rs = (char*) malloc(n);
+			memset(rs, 0, n);
+			memcpy(rs, shared_data, n - 1);
+			free(shared_data);
+			shared_data = 0;
+		}
+	pthread_mutex_unlock(&g_mutex);
+	return rs;
+}
+void set_shared_data(char* data){
+	if(data == 0){
+		return;
+	}
+	int n = strlen(data);
+	if(n == 0){
+		return;
+	}
+	pthread_mutex_lock(&g_mutex);
+		shared_data = (char*) malloc(n + 1);
+		memset(shared_data, 0, n + 1);
+		memcpy(shared_data, data, n);
+	pthread_mutex_unlock(&g_mutex);
 }
